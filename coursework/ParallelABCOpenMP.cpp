@@ -5,7 +5,7 @@
 #include <iostream>
 #include <cmath>
 
-ParallelABCOpenMP::ParallelABCOpenMP(JobShopInstance* inst, int sn, int lim, int t, int simulationRuns, int threads)
+ParallelABCOpenMP::ParallelABCOpenMP(const JobShopInstance& inst, int sn, int lim, int t, int simulationRuns, int threads)
     : ABCAlgorithm(inst, sn, lim, t, simulationRuns), numThreads(threads) {
 }
 
@@ -118,7 +118,7 @@ void ParallelABCOpenMP::parallelBudgetAllocation(std::vector<Schedule>& solution
 }
 
 void ParallelABCOpenMP::initialize() {
-    population.resize(SN, Schedule(instance));
+    population.resize(SN, Schedule(&instance));
     
     #pragma omp parallel for schedule(dynamic, 1) num_threads(numThreads)
     for (int i = 0; i < SN; ++i) {
@@ -142,10 +142,11 @@ void ParallelABCOpenMP::run(int maxIter) {
         for (int i = 0; i < SN; ++i) {
             if (trials[i] >= limit) {
                 // 'scout' bee generates random solution
-                Schedule newSol(instance);
-                const int rndCount = randInt(0, instance->numJobs / 2);
-                for (int j = 0; j < rndCount; ++j)
+                Schedule newSol(&instance);
+                const int rndCount = randInt(0, instance.numJobs / 2);
+                for (int i = 0; i < rndCount; ++i)
                     newSol = newSol.getNeighborByArcOrientation();
+                //Schedule newSol = getBestSolutionInPopulation();
                 newSol.evaluateMCParallel(simulationRuns, numThreads);
                 population[i] = newSol;
                 trials[i] = 0;
@@ -157,7 +158,7 @@ void ParallelABCOpenMP::run(int maxIter) {
 
         bestSolution = getBestSolutionInPopulation();
         
-        /*if ((iter + 1) % 100 == 0)
+        /*if ((iter + 1) % 10 == 0)
         {
             std::cout << "Iteration " << (iter + 1) << "/" << maxIter
                       << ", Best Lmax = " << bestSolution.cachedLmaxMean << std::endl;

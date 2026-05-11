@@ -1,4 +1,4 @@
-﻿#ifndef ALGORITHM_VALIDATOR_H
+#ifndef ALGORITHM_VALIDATOR_H
 #define ALGORITHM_VALIDATOR_H
 
 #include "ABCAlgorithm.h"
@@ -638,14 +638,20 @@ void runFullValidation(JobShopInstance& instance,
     auto seqStability = stabilityTest.testStability(
         instance, "Sequential ABC",
         populationSize, limit, budget, simulationRuns, 200, 5,
-        [&]() { return ABCAlgorithm(&instance, populationSize, limit, budget, simulationRuns); }
+        [&]() {
+            ABCAlgorithm* algo = new ABCAlgorithm(instance, populationSize, limit, budget, simulationRuns);
+            return *algo;
+        }
     );
     seqStability.print();
 
     auto parStability = stabilityTest.testStability(
         instance, "Parallel ABC (OpenMP)",
         populationSize, limit, budget, simulationRuns, 200, 5,
-        [&]() { return ParallelABCOpenMP(&instance, populationSize, limit, budget, simulationRuns, numThreads); }
+        [&]() {
+            ParallelABCOpenMP* algo = new ParallelABCOpenMP(instance, populationSize, limit, budget, simulationRuns, numThreads);
+            return *algo;
+        }
     );
     parStability.print();
 
@@ -740,7 +746,7 @@ void runFullValidation(JobShopInstance& instance,
     std::cout << "Parallel vs Heuristics        : " << (parImproved ? "PASS" : "FAIL") << "\n";
     std::cout << "Sequential vs Parallel        : " << (parallelBest.cachedLmaxMean < sequentialBest.cachedLmaxMean ? "Parallel wins" : "Sequential wins") << "\n";
     std::cout << "\n";
-   
+
     addGreedyComparison(instance, sequentialBest, parallelBest, simulationRuns);
 }
 

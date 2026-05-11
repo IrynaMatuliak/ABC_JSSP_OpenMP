@@ -7,7 +7,7 @@
 
 class ABCAlgorithm {
 protected:
-    JobShopInstance* instance;
+    const JobShopInstance& instance;
     int SN;
     int limit;
     int T;
@@ -32,7 +32,7 @@ protected:
     const Schedule& getBestSolutionInPopulation() const;
 
 public:
-    ABCAlgorithm(JobShopInstance* inst, int sn, int lim, int t, int simulationRuns);
+    ABCAlgorithm(const JobShopInstance& inst, int sn, int lim, int t, int simulationRuns);
     virtual ~ABCAlgorithm() = default;
 
     virtual void initialize();

@@ -11,7 +11,7 @@ class Schedule {
 public:
     std::vector<std::vector<int>> machineSequences;
     std::vector<int> operationSequence;
-    JobShopInstance* instance;
+    const JobShopInstance* instance;
     double cachedLmaxMean;
     int cachedLmaxLBJob;
     double cachedLmaxLB;
@@ -20,8 +20,9 @@ public:
     std::vector<double> simulationResults;
 
     Schedule();
-    Schedule(JobShopInstance* inst);
+    Schedule(const JobShopInstance* inst);
     Schedule(const Schedule& other);
+    Schedule(Schedule&& other);
     Schedule& operator=(const Schedule& other);
     ~Schedule() = default;
 

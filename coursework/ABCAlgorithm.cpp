@@ -5,7 +5,7 @@
 #include <cmath>
 #include <iostream>
 
-ABCAlgorithm::ABCAlgorithm(JobShopInstance* inst, int sn, int lim, int t, int simulationRuns)
+ABCAlgorithm::ABCAlgorithm(const JobShopInstance& inst, int sn, int lim, int t, int simulationRuns)
     : instance(inst), SN(sn), limit(lim), T(t), maxIterations(0), simulationRuns(simulationRuns) {
     population.reserve(SN);
     trials.resize(SN, 0);
@@ -105,7 +105,7 @@ void ABCAlgorithm::preScreenAndEvaluate(Schedule& newSol, const Schedule& curren
 void ABCAlgorithm::initialize() {
     population.clear();
     for (int i = 0; i < SN; ++i) {
-        population.emplace_back(instance);
+        population.emplace_back(&instance);
         Schedule& s = population.back();
         s.evaluateLowerBound();
         s.evaluateMC(simulationRuns);
@@ -151,10 +151,11 @@ void ABCAlgorithm::run(int maxIter) {
         for (int i = 0; i < SN; ++i) {
             if (trials[i] >= limit) {
                 // 'scout' bee generates random solution
-                Schedule newSol(instance);
-                const int rndCount = randInt(0, instance->numJobs / 2);
-                for (int j = 0; j < rndCount; ++j)
+                Schedule newSol(&instance);
+                const int rndCount = randInt(0, instance.numJobs / 2);
+                for (int i=0; i < rndCount; ++i)
                    newSol = newSol.getNeighborByArcOrientation();
+                //Schedule newSol = getBestSolutionInPopulation();
                 newSol.evaluateMC(simulationRuns);
                 population[i] = newSol;
                 trials[i] = 0;
@@ -166,7 +167,7 @@ void ABCAlgorithm::run(int maxIter) {
 
         bestSolution = getBestSolutionInPopulation();
 
-        /*if ((iter + 1) % 100 == 0)
+        /*if ((iter + 1) % 10 == 0)
         {
             std::cout << "Iteration " << (iter + 1) << "/" << maxIter
                 << ", Best Lmax = " << bestSolution.cachedLmaxMean << std::endl;

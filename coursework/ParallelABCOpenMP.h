@@ -15,12 +15,11 @@ private:
     void updateFitnessValuesParallel();
 
 public:
-    ParallelABCOpenMP(JobShopInstance* inst, int sn, int lim, int t, int simulationRuns, int threads);
+    ParallelABCOpenMP(const JobShopInstance& inst, int sn, int lim, int t, int simulationRuns, int threads);
     ~ParallelABCOpenMP() = default;
 
     void initialize() override;
     void run(int maxIter) override;
-    void setNumThreads(int threads) { numThreads = threads; omp_set_num_threads(threads); }
 };
 
 #endif

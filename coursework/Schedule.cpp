@@ -13,6 +13,7 @@
 #include <random>
 #include <chrono>
 #include <fstream>
+
 #include <cassert>
 
 static thread_local std::mt19937 local_rng(std::random_device{}());
@@ -39,6 +40,18 @@ Schedule::Schedule(const Schedule& other) {
     simulationResults = other.simulationResults;
 }
 
+Schedule::Schedule(Schedule&& other) {
+   instance = other.instance;
+   machineSequences = other.machineSequences;
+   operationSequence = other.operationSequence;
+   cachedLmaxMean = other.cachedLmaxMean;
+   cachedLmaxLBJob = other.cachedLmaxLBJob;
+   cachedLmaxLB = other.cachedLmaxLB;
+   cachedVariance = other.cachedVariance;
+   evalCount = other.evalCount;
+   simulationResults = other.simulationResults;
+}
+
 Schedule& Schedule::operator=(const Schedule& other) {
     if (this != &other) {
         instance = other.instance;
@@ -54,7 +67,7 @@ Schedule& Schedule::operator=(const Schedule& other) {
     return *this;
 }
 
-Schedule::Schedule(JobShopInstance* inst)
+Schedule::Schedule(const JobShopInstance* inst)
     : instance(inst)
     , cachedLmaxMean(1e9)
     , cachedLmaxLBJob(-1)
@@ -549,7 +562,7 @@ std::pair<int, double> Schedule::evaluateDeterministic(const std::vector<double>
          maxLatenessJob = j;
       }
    }
-   return { maxLatenessJob, /*sumLateness / n*/ maxLateness };
+   return { maxLatenessJob, /*maxLateness*/ sumLateness / n };
 }
 
 /**

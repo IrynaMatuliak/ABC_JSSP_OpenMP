@@ -75,9 +75,15 @@ void JobShopInstance::generateDueDates(int numSimulations) {
             machineOneJobTime[jobIdx] = (jobIdx == 0 ? 0 : machineOneJobTime[jobIdx-1]) + op.mean;
          }
       }
+      // plan some random buffer
       totalJobTime[jobIdx] *= randDouble(1.0, 1.5);
    }
 
+   // lets assume the following: 
+   // 1. tasks are sorted out by their duedates. So, task #1 shall be finished fisrt.
+   // 2. every job is running on every machine, so machine #1 will present the timeline
+
+   // in respect to assumption (1), first job`s duedate ~ equal to its total processing time.
    dueDates[0] = totalJobTime[0];
 
    for (size_t jobIdx = 1; jobIdx < numJobs; ++jobIdx) {
@@ -236,7 +242,8 @@ void JobShopInstance::readFromFile(const std::string& fileName)
       rapidjson::Value& jobsValue = doc["jobs"];
       auto jobsArray = jobsValue.GetArray();
       for (auto& job : jobsArray) {
-         jobs.emplace_back();
+         // job["jobId"].GetInt(); do not care, just an index
+         jobs.emplace_back(); // push empty element
          rapidjson::Value& operationValue = job["operations"];
          auto operations = operationValue.GetArray();
          for (auto& operation : operations) {

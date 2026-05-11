@@ -14,6 +14,15 @@
 
 std::mt19937 rng(12345);
 
+JobShopInstance copyInstance(const JobShopInstance& original) {
+    JobShopInstance copy(original.numJobs, original.numMachines, original.distType, original.theta);
+    copy.jobs = original.jobs;
+    copy.dueDates = original.dueDates;
+    copy.jobWeights = original.jobWeights;
+    copy.operationsPerMachine = original.operationsPerMachine;
+    return copy;
+}
+
 double calculateMakespan(const Schedule& schedule) {
     int n = schedule.instance->numJobs;
     int m = schedule.instance->numMachines;
@@ -50,27 +59,25 @@ bool quickCheckFeasibility(const Schedule& schedule) {
 
 bool fullFeasibilityCheck(const Schedule& schedule, bool verbose = false) {
     auto startTime = std::chrono::high_resolution_clock::now();
-
     bool result = schedule.verifyFullAcyclicity();
-
     auto endTime = std::chrono::high_resolution_clock::now();
     auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(endTime - startTime);
 
     if (verbose) {
         std::cout << "    Full feasibility check took " << duration.count() << " ms\n";
     }
-
     return result;
 }
 
-JobShopInstance copyInstance(const JobShopInstance& original) {
-    JobShopInstance copy(original.numJobs, original.numMachines, original.distType, original.theta);
-    copy.jobs = original.jobs;
-    copy.dueDates = original.dueDates;
-    copy.jobWeights = original.jobWeights;
-    copy.operationsPerMachine = original.operationsPerMachine;
-    return copy;
-}
+struct SResult {
+    int numThreads = 0;
+    double avgTime = 0.0;
+    double speedup = 0.0;
+    double efficiency = 0.0;
+    double avgLmax = 0.0;
+    double avgMakespan = 0.0;
+    bool allFeasible = true;
+};
 
 int main() {
     std::cout << "============================================================\n";
@@ -78,194 +85,122 @@ int main() {
     std::cout << "============================================================\n";
 
     const int numJobs = 1000;
-    const int numMachines = 100;
-    const int numThreads = 8;
+    const int numMachines = 200;
     const int populationSize = 50;
     const int limit = 50;
     const int maxIterations = 1000;
     const double theta = 0.2;
     const int budget = 200;
     const auto distType = JobShopInstance::MEAN;
-    const int numRuns = 10;
-
-    // how many simulations run to test feasibility of the setup
     const int simulationRuns = 5;
+    const int numRuns = 5;
 
     std::cout << "\nConfiguration:\n";
     std::cout << "  Jobs: " << numJobs << "\n";
     std::cout << "  Machines: " << numMachines << "\n";
-    std::cout << "  Threads: " << numThreads << "\n";
     std::cout << "  Iterations: " << maxIterations << "\n";
     std::cout << "  Population: " << populationSize << "\n";
     std::cout << "  Budget: " << budget << "\n";
     std::cout << "  NumRuns: " << numRuns << "\n";
 
     JobShopInstance baseInstance(numJobs, numMachines, distType, theta);
-
     if (!std::filesystem::exists("baseInstance.json")) {
         baseInstance.generateRandomInstance(42);
         baseInstance.writeToFile("baseInstance.json");
-        std::cout << "Instance generated.\n";
     } else {
-        std::cout << "Instance read from file 'baseInstance.json'.\n";
         baseInstance.readFromFile("baseInstance.json");
-        // if doesnt match - regenerate with new set of input parameters
-        if (baseInstance.numJobs != numJobs || baseInstance.numMachines != numMachines || baseInstance.distType != distType || baseInstance.theta != theta) {
+        if (baseInstance.numJobs != numJobs || baseInstance.numMachines != numMachines) {
             baseInstance = JobShopInstance(numJobs, numMachines, distType, theta);
             baseInstance.generateRandomInstance(42);
             baseInstance.writeToFile("baseInstance.json");
-            std::cout << "Saved data doesn`t match. Instance generated with new input parameters.\n";
         }
     }
 
-    std::cout << "\nVerifying initial schedule feasibility...\n";
-    Schedule testSchedule(&baseInstance);
-    bool initialFeasible = testSchedule.isAcyclicFast();
-    std::cout << "  Initial schedule is " << (initialFeasible ? "FEASIBLE" : "INFEASIBLE") << "\n";
+    std::cout << "\nRunning SEQUENTIAL ABC (" << numRuns << " times)...\n";
+    std::vector<double> sTimes, sLmaxs, sMakespans;
+    bool allSeqFeasible = true;
 
-    if (!initialFeasible) {
-        std::cout << "  Repairing initial schedule...\n";
-        testSchedule.repair();
-        std::cout << "  After repair: " << (testSchedule.isAcyclicFast() ? "FEASIBLE" : "INFEASIBLE") << "\n";
+    for (int i = 0; i < numRuns; ++i) {
+        JobShopInstance inst = copyInstance(baseInstance);
+        Timer t; t.start();
+        ABCAlgorithm algo(inst, populationSize, limit, budget, simulationRuns);
+        algo.initialize();
+        algo.run(maxIterations);
+
+        sTimes.push_back(t.elapsedSec());
+        sLmaxs.push_back(algo.getBestSolution().cachedLmaxMean);
+        sMakespans.push_back(calculateMakespan(algo.getBestSolution()));
+        if (!quickCheckFeasibility(algo.getBestSolution())) allSeqFeasible = false;
     }
 
+    double avgSeqTime = std::accumulate(sTimes.begin(), sTimes.end(), 0.0) / numRuns;
+    double avgSeqLmax = std::accumulate(sLmaxs.begin(), sLmaxs.end(), 0.0) / numRuns;
+    double avgSeqMakespan = std::accumulate(sMakespans.begin(), sMakespans.end(), 0.0) / numRuns;
 
-    std::vector<double> seqTimes(numRuns);
-    std::vector<double> seqMakespans(numRuns);
-    std::vector<double> seqLmaxValues(numRuns);
-    std::vector<bool> seqFeasibleResults(numRuns);
+    const std::vector<int> threadsCount = { 2, 4, 6, 7, 8, 10, 12, 16, 25 };
+    std::vector<SResult> results;
 
-    std::vector<double> ompTimes(numRuns);
-    std::vector<double> ompMakespans(numRuns);
-    std::vector<double> ompLmaxValues(numRuns);
-    std::vector<bool> ompFeasibleResults(numRuns);
+    for (int nThreads : threadsCount) {
+        std::cout << "Running PARALLEL ABC with " << nThreads << " threads (" << numRuns << " times)...\n";
+        std::vector<double> pTimes, pLmaxs, pMakespans;
+        bool allParFeasible = true;
 
-    int seqBetterCount = 0;
-    int ompBetterCount = 0;
-    int tieCount = 0;
+        for (int i = 0; i < numRuns; ++i) {
+            JobShopInstance inst = copyInstance(baseInstance);
+            Timer t; t.start();
+            ParallelABCOpenMP algo(inst, populationSize, limit, budget, simulationRuns, nThreads);
+            algo.initialize();
+            algo.run(maxIterations);
 
-    for (int run = 0; run < numRuns; ++run) {
-        JobShopInstance seqInstance = copyInstance(baseInstance);
-        Timer seqTimer;
-        seqTimer.start();
-
-        ABCAlgorithm sequential(&seqInstance, populationSize, limit, budget, simulationRuns);
-        sequential.initialize();
-        sequential.run(maxIterations);
-
-        double seqTime = seqTimer.elapsedSec();
-        const Schedule& bestSeq = sequential.getBestSolution();
-        double seqMakespan = calculateMakespan(bestSeq);
-
-        bool seqQuickFeasible = quickCheckFeasibility(bestSeq);
-        bool seqFeasible = seqQuickFeasible;
-        if (seqQuickFeasible) {
-            seqFeasible = fullFeasibilityCheck(bestSeq, false);
+            pTimes.push_back(t.elapsedSec());
+            pLmaxs.push_back(algo.getBestSolution().cachedLmaxMean);
+            pMakespans.push_back(calculateMakespan(algo.getBestSolution()));
+            if (!quickCheckFeasibility(algo.getBestSolution())) allParFeasible = false;
         }
 
-        seqTimes[run] = seqTime;
-        seqMakespans[run] = seqMakespan;
-        seqLmaxValues[run] = bestSeq.cachedLmaxMean;
-        seqFeasibleResults[run] = seqFeasible;
-
-        JobShopInstance ompInstance = copyInstance(baseInstance);
-        Timer ompTimer;
-        ompTimer.start();
-
-        ParallelABCOpenMP ompParallel(&ompInstance, populationSize, limit, budget, simulationRuns, numThreads);
-        ompParallel.initialize();
-        ompParallel.run(maxIterations);
-
-        double ompTime = ompTimer.elapsedSec();
-        const Schedule& bestOmp = ompParallel.getBestSolution();
-        double ompMakespan = calculateMakespan(bestOmp);
-
-        bool ompQuickFeasible = quickCheckFeasibility(bestOmp);
-        bool ompFeasible = ompQuickFeasible;
-        if (ompQuickFeasible) {
-            ompFeasible = fullFeasibilityCheck(bestOmp, false);
-        }
-
-        ompTimes[run] = ompTime;
-        ompMakespans[run] = ompMakespan;
-        ompLmaxValues[run] = bestOmp.cachedLmaxMean;
-        ompFeasibleResults[run] = ompFeasible;
-
-        if (bestOmp.cachedLmaxMean < bestSeq.cachedLmaxMean) {
-            ompBetterCount++;
-        } else if (bestSeq.cachedLmaxMean < bestOmp.cachedLmaxMean) {
-            seqBetterCount++;
-        } else {
-            tieCount++;
-        }
+        double avgTime = std::accumulate(pTimes.begin(), pTimes.end(), 0.0) / numRuns;
+        SResult res;
+        res.numThreads = nThreads;
+        res.avgTime = avgTime;
+        res.speedup = avgSeqTime / avgTime;
+        res.efficiency = res.speedup / nThreads;
+        res.avgLmax = std::accumulate(pLmaxs.begin(), pLmaxs.end(), 0.0) / numRuns;
+        res.avgMakespan = std::accumulate(pMakespans.begin(), pMakespans.end(), 0.0) / numRuns;
+        res.allFeasible = allParFeasible;
+        results.push_back(res);
     }
 
-    double avgSeqTime = std::accumulate(seqTimes.begin(), seqTimes.end(), 0.0) / numRuns;
-    double avgSeqMakespan = std::accumulate(seqMakespans.begin(), seqMakespans.end(), 0.0) / numRuns;
-    double avgSeqLmax = std::accumulate(seqLmaxValues.begin(), seqLmaxValues.end(), 0.0) / numRuns;
-
-    double avgOmpTime = std::accumulate(ompTimes.begin(), ompTimes.end(), 0.0) / numRuns;
-    double avgOmpMakespan = std::accumulate(ompMakespans.begin(), ompMakespans.end(), 0.0) / numRuns;
-    double avgOmpLmax = std::accumulate(ompLmaxValues.begin(), ompLmaxValues.end(), 0.0) / numRuns;
-
-    double avgSpeedup = avgSeqTime / avgOmpTime;
-    double avgEfficiency = (avgSeqTime / avgOmpTime) / numThreads;
-
-    bool finalSeqFeasible = std::all_of(seqFeasibleResults.begin(), seqFeasibleResults.end(), [](bool v) { return v; });
-    bool finalOmpFeasible = std::all_of(ompFeasibleResults.begin(), ompFeasibleResults.end(), [](bool v) { return v; });
-
-    std::cout << "\n============================================================\n";
-    std::cout << "RESULTS\n";
-    std::cout << "============================================================\n";
-    std::cout << std::left << std::setw(15) << "Method"
-        << std::setw(12) << "Time(s)"
-        << std::setw(12) << "Speedup"
+    std::cout << "\n" << std::string(90, '=') << "\n";
+    std::cout << std::left << std::setw(12) << "Method"
+        << std::setw(10) << "Threads"
+        << std::setw(10) << "Time(s)"
+        << std::setw(10) << "Speedup"
         << std::setw(12) << "Efficiency"
-        << std::setw(15) << "Lmax"
+        << std::setw(12) << "Lmax"
         << std::setw(12) << "Makespan"
-        << std::setw(12) << "Feasible" << "\n";
-    std::cout << "------------------------------------------------------------\n";
+        << "Feasible\n";
+    std::cout << std::string(90, '-') << "\n";
 
-    std::cout << std::left << std::setw(15) << "Sequential"
-        << std::right << std::setw(10) << std::fixed << std::setprecision(2) << avgSeqTime
+    std::cout << std::left << std::setw(12) << "Sequential"
+        << std::setw(10) << "-"
+        << std::fixed << std::setprecision(2) << std::setw(10) << avgSeqTime
+        << std::setw(10) << "-"
         << std::setw(12) << "-"
-        << std::setw(12) << "-"
-        << std::setw(15) << std::fixed << std::setprecision(2) << avgSeqLmax
-        << std::setw(12) << std::fixed << std::setprecision(1) << avgSeqMakespan
-        << std::setw(12) << (finalSeqFeasible ? "Yes" : "No") << "\n";
+        << std::setw(12) << avgSeqLmax
+        << std::setw(12) << std::setprecision(1) << avgSeqMakespan
+        << (allSeqFeasible ? "Yes" : "No") << "\n";
 
-    std::cout << std::left << std::setw(15) << "OpenMP"
-        << std::right << std::setw(10) << std::fixed << std::setprecision(2) << avgOmpTime
-        << std::setw(12) << std::fixed << std::setprecision(2) << avgSpeedup
-        << std::setw(12) << std::fixed << std::setprecision(2) << avgEfficiency
-        << std::setw(15) << std::fixed << std::setprecision(2) << avgOmpLmax
-        << std::setw(12) << std::fixed << std::setprecision(1) << avgOmpMakespan
-        << std::setw(12) << (finalOmpFeasible ? "Yes" : "No") << "\n";
-
-    std::cout << "\n============================================================\n";
-
-    if (finalSeqFeasible && finalOmpFeasible) {
-        std::cout << "Both schedules are FEASIBLE - No cycles detected\n";
-
-        if (ompBetterCount > seqBetterCount) {
-            std::cout << "Parallel algorithm found better solution\n";
-        } else if (seqBetterCount > ompBetterCount) {
-            std::cout << "Sequential algorithm found better solution\n";
-        } else {
-            if (avgOmpLmax < avgSeqLmax) {
-                std::cout << "Parallel algorithm found better solution (better average Lmax)\n";
-            } else if (avgSeqLmax < avgOmpLmax) {
-                std::cout << "Sequential algorithm found better solution (better average Lmax)\n";
-            } else {
-                std::cout << "Both algorithms found similar quality solutions\n";
-            }
-        }
-
-    } else if (!finalSeqFeasible && !finalOmpFeasible) {
-        std::cout << "Both schedules are INFEASIBLE - Cycles detected\n";
-    } else {
-        std::cout << "Mixed results - One schedule is feasible, the other is not\n";
+    for (const auto& res : results) {
+        std::cout << std::left << std::setw(12) << "OpenMP"
+            << std::setw(10) << res.numThreads
+            << std::fixed << std::setprecision(2) << std::setw(10) << res.avgTime
+            << std::setw(10) << res.speedup
+            << std::setw(12) << res.efficiency
+            << std::setw(12) << res.avgLmax
+            << std::setw(12) << std::setprecision(1) << res.avgMakespan
+            << (res.allFeasible ? "Yes" : "No") << "\n";
     }
+    std::cout << std::string(90, '=') << "\n";
 
     return 0;
 }
